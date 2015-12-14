@@ -8,18 +8,23 @@ import com.sharingapples.sync.store.StoreException;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 
 /**
  * Created by ranjan on 12/13/15.
  */
 public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
+
+  private final Statement statement;
   private final ResourceMap<T> map;
   private final ResultSet rs;
+
 
   private final int[] columnIndexes;
   private final int primaryFieldColumnIndex;
 
-  public JDBCRecordSet(ResourceMap<T> map, ResultSet rs) throws StoreException {
+  JDBCRecordSet(Statement statement, ResourceMap<T> map, ResultSet rs) throws StoreException {
+    this.statement = statement;
     this.map = map;
     this.rs = rs;
 
@@ -57,10 +62,11 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
         return true;
       } else {
         rs.close();
+        statement.close();
         return false;
       }
     } catch(SQLException e) {
-      throw new StoreException("Error while trying to move to next record");
+      throw new StoreException("Error while trying to move to next record", e);
     }
   }
 
