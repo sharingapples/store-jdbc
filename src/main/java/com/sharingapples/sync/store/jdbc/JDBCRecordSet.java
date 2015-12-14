@@ -34,7 +34,7 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
       FieldMap fieldMap = map.getFieldMap(i);
 
       // skip the many relations field
-      if (fieldMap.getType().isMany()) {
+      if (fieldMap.getType().isMany() || fieldMap.isTransient()) {
         continue;
       }
 
@@ -81,7 +81,7 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
       FieldMap fieldMap = map.getFieldMap(i);
 
       // skip the many relations field
-      if (fieldMap.getType().isMany()) {
+      if (fieldMap.getType().isMany() || fieldMap.isTransient()) {
         continue;
       }
 

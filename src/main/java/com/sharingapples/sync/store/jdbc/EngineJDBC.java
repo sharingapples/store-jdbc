@@ -37,7 +37,7 @@ public class EngineJDBC extends Engine {
     String sql = "CREATE TABLE IF NOT EXISTS " + quoteSystemIdentifier(map.getName()) + "(";
     for(int i=0; i<map.getFieldsCount(); ++i) {
       FieldMap fieldMap = map.getFieldMap(i);
-      if (fieldMap.getType().isMany()) {
+      if (fieldMap.getType().isMany() || fieldMap.isTransient()) {
         continue;
       }
 
@@ -157,7 +157,7 @@ public class EngineJDBC extends Engine {
       FieldMap fieldMap =  map.getFieldMap(i);
 
       // skip the many relationships
-      if (fieldMap.getType().isMany()) {
+      if (fieldMap.getType().isMany() || fieldMap.isTransient()) {
         continue;
       }
 
@@ -183,6 +183,10 @@ public class EngineJDBC extends Engine {
         FieldMap fieldMap = map.getFieldMap(i);
         if (fieldMap.getType().isMany()) {
           manyList.add((Many)fieldMap.get(resource));
+          continue;
+        }
+
+        if (fieldMap.isTransient()) {
           continue;
         }
 
@@ -243,7 +247,7 @@ public class EngineJDBC extends Engine {
     for(int i=0; i<map.getFieldsCount(); ++i) {
       FieldMap fieldMap = map.getFieldMap(i);
 
-      if (fieldMap.getType().isMany() || fieldMap == map.getPrimaryField()) {
+      if (fieldMap.getType().isMany() || fieldMap == map.getPrimaryField() || fieldMap.isTransient()) {
         // Skip the Many relationship and the primary key field
         continue;
       }
@@ -267,7 +271,7 @@ public class EngineJDBC extends Engine {
       for(int i=0; i<map.getFieldsCount(); ++i) {
         FieldMap fieldMap = map.getFieldMap(i);
 
-        if (fieldMap.getType().isMany() || fieldMap == map.getPrimaryField()) {
+        if (fieldMap.getType().isMany() || fieldMap == map.getPrimaryField() || fieldMap.isTransient()) {
           // Skip the Many relationships and the primary key field
           continue;
         }
