@@ -12,8 +12,8 @@ public class Book implements ResourceMarker {
   @Field private Long id;
   @Field private String title;
   @Field private String isbn;
-  @Field private Publisher publisher;
   @Field private Many<Author> authors;
+  @Field private Publisher publisher;
 
 
   @Override
