@@ -76,28 +76,41 @@ public class StoreJDBC extends Store {
       throw new StoreException("Error while executing sql - " + sql, e);
     }
 
-    return new JDBCRecordSet(map, rs);
+    return new JDBCRecordSet<T>(stmt, map, rs);
   }
 
   @Override
-  public <T extends ResourceMarker> T fetch(ResourceMap<T> map, T resource) {
+  public <T extends ResourceMarker> T fetch(ResourceMap<T> map, Object id) {
     String sql = "SELECT * FROM " + quoteSystemIdentifier(map.getName())
             + " WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName())
             + "=?";
 
+    PreparedStatement stmt;
     ResultSet rs;
     try {
-      PreparedStatement stmt = db.prepareStatement(sql);
-      map.getPrimaryField().getType().toJDBC(stmt, 1, resource.getId());
+      stmt = db.prepareStatement(sql);
+      map.getPrimaryField().getType().toJDBC(stmt, 1, id);
       rs = stmt.executeQuery();
     } catch(SQLException e) {
       throw new StoreException("Error while executing - " + sql, e);
     }
 
-    // Create a recordset that does all the transformation
-    JDBCRecordSet<T> recordSet = new JDBCRecordSet<T>(map, rs);
+    // Create a RecordSet that does all the transformation
+    JDBCRecordSet<T> recordSet = new JDBCRecordSet<T>(stmt, map, rs);
 
-    return recordSet.next();
+    if (recordSet.hasNext()) {
+      T res = recordSet.next();
+
+      // If there are more than one records, then raise an error flag and iterate
+      // through them, to make sure the record set is closed properly
+      while(recordSet.hasNext()) {
+        LOGGER.warn("More than one record retrieved in fetch for " + map.getName() + " for id " + id);
+      }
+
+      return res;
+    } else {
+      return null;
+    }
   }
 
   @Override
@@ -108,6 +121,7 @@ public class StoreJDBC extends Store {
     sqlBuilder.append("INSERT INTO ");
     sqlBuilder.append(quoteSystemIdentifier(map.getName()));
     sqlBuilder.append('(');
+    boolean first = true;
     for(int i=0; i<map.getFieldsCount(); ++i) {
       FieldMap fieldMap =  map.getFieldMap(i);
 
@@ -116,9 +130,11 @@ public class StoreJDBC extends Store {
         continue;
       }
 
-      if (i>0) {
+      if (!first) {
         sqlBuilder.append(',');
         placeHolders.append(',');
+      } else {
+        first = false;
       }
       sqlBuilder.append(quoteSystemIdentifier(fieldMap.getName()));
       placeHolders.append('?');
@@ -128,48 +144,119 @@ public class StoreJDBC extends Store {
     sqlBuilder.append(placeHolders);
     sqlBuilder.append(");");
 
-    PreparedStatement stmt;
-    try {
-      stmt = db.prepareStatement(sqlBuilder.toString(), Statement.RETURN_GENERATED_KEYS);
-    } catch(SQLException e) {
+    try (PreparedStatement stmt = db.prepareStatement(sqlBuilder.toString(), Statement.RETURN_GENERATED_KEYS)) {
+      int columnIndex = 0;
+      for (int i = 0; i < map.getFieldsCount(); ++i) {
+        FieldMap fieldMap = map.getFieldMap(i);
+        if (fieldMap.getType().isMany()) {
+          continue;
+        }
+
+        Object fieldValue = fieldMap.get(resource);
+
+        if (fieldMap.getType().isReference()) {
+          // in case of reference, we might need to do a recursive insert for
+          // references without
+          if (fieldValue != null && ((ResourceMarker)fieldValue).getId() == null) {
+            fieldValue = insert((ResourceMap)fieldMap.getType(), (ResourceMarker)fieldValue);
+          }
+        }
+
+        fieldMap.getType().toJDBC(stmt, ++columnIndex, fieldValue);
+      }
+
+      int affectedRows;
+      try {
+        affectedRows = stmt.executeUpdate();
+      } catch (SQLException e) {
+        throw new StoreException("Error while executing " + sqlBuilder.toString(), e);
+      }
+      if (affectedRows != 1) {
+        throw new StoreException("Could not retrieve the automatically generated id");
+      }
+
+      try (ResultSet keys = stmt.getGeneratedKeys()) {
+        if (keys.next()) {
+          map.getPrimaryField().set(resource, map.getPrimaryField().getType().fromJDBC(keys, 1));
+          return map.find(resource.getId(), resource);
+        } else {
+          throw new StoreException("Generated Key not found while inserting new record for " + map.getName());
+        }
+      } catch (SQLException e) {
+        throw new StoreException("Error while trying to retrieve generated keys", e);
+      }
+
+    } catch (SQLException e) {
       throw new StoreException("Error while preparing " + sqlBuilder.toString(), e);
     }
-
-    for(int i=0; i<map.getFieldsCount(); ++i) {
-      FieldMap fieldMap = map.getFieldMap(i);
-      if (fieldMap.getType().isMany()) {
-        continue;
-      }
-      fieldMap.getType().toJDBC(stmt, i+1, fieldMap.get(resource));
-    }
-
-    int affectedRows;
-    try {
-      affectedRows = stmt.executeUpdate();
-    } catch(SQLException e) {
-      throw new StoreException("Error while executing " + sqlBuilder.toString(), e);
-    }
-    if (affectedRows != 1) {
-      throw new StoreException("Could not retrieve the automatically generated id");
-    }
-
-    try {
-      ResultSet keys = stmt.getGeneratedKeys();
-      if (keys.next()) {
-        map.getPrimaryField().set(resource, map.getPrimaryField().getType().fromJDBC(keys, 1));
-        return map.find(resource.getId(), resource);
-      } else {
-        throw new StoreException("Generated Key not found while inserting new record for " + map.getName());
-      }
-    } catch(SQLException e) {
-      throw new StoreException("Error while trying to retrieve generated keys", e);
-    }
-
   }
 
   @Override
   public <T extends ResourceMarker> T update(ResourceMap<T> map, T resource) {
-    throw new UnsupportedOperationException("Not implemented yet. Please update now.");
+    StringBuilder sqlBuilder = new StringBuilder();
+    sqlBuilder.append("UPDATE ");
+    sqlBuilder.append(quoteSystemIdentifier(map.getName()));
+    sqlBuilder.append(" SET");
+
+    boolean first = true;
+    for(int i=0; i<map.getFieldsCount(); ++i) {
+      FieldMap fieldMap = map.getFieldMap(i);
+
+      if (fieldMap.getType().isMany() || fieldMap == map.getPrimaryField()) {
+        // Skip the Many relationship and the primary key field
+        continue;
+      }
+
+      if (!first) {
+        sqlBuilder.append(',');
+      } else {
+        first = false;
+      }
+      sqlBuilder.append(fieldMap.getName());
+      sqlBuilder.append("=?");
+    }
+
+    sqlBuilder.append(" WHERE ");
+    sqlBuilder.append(map.getPrimaryField().getName());
+    sqlBuilder.append("=?");
+
+    try (PreparedStatement stmt = getConnection().prepareStatement(sqlBuilder.toString())) {
+      // fill up all the '?';
+      int columnIndex = 0;
+      for(int i=0; i<map.getFieldsCount(); ++i) {
+        FieldMap fieldMap = map.getFieldMap(i);
+
+        if (fieldMap.getType().isMany() || fieldMap == map.getPrimaryField()) {
+          // Skip the Many relationships and the primary key field
+          continue;
+        }
+
+        Object fieldValue = fieldMap.get(resource);
+        if (fieldMap.getType().isReference()) {
+          // Check if the referenced type is inserted in the database or not
+          // if not do the insertion now
+          if (fieldValue != null && ((ResourceMarker)fieldValue).getId() == null) {
+            fieldValue = insert((ResourceMap)fieldMap.getType(), (ResourceMarker)fieldValue);
+          }
+        }
+
+        fieldMap.getType().toJDBC(stmt, ++columnIndex, fieldValue);
+      }
+
+      // Set the primary key value
+      map.getPrimaryField().getType().toJDBC(stmt, ++columnIndex, resource.getId());
+
+      try {
+        stmt.executeUpdate();
+      } catch(SQLException e) {
+        throw new StoreException("Error while executing sql - " + sqlBuilder.toString(), e);
+      }
+
+      return resource;
+
+    } catch(SQLException e) {
+      throw new StoreException("Error while preparing sql - " + sqlBuilder.toString(), e);
+    }
   }
 
   @Override
