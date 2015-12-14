@@ -1,9 +1,5 @@
 package com.sharingapples.sync.store.jdbc;
 
-import com.sharingapples.sync.resource.FieldMap;
-import com.sharingapples.sync.resource.Many;
-import com.sharingapples.sync.resource.ResourceMap;
-import com.sharingapples.sync.resource.ResourceMarker;
 import com.sharingapples.sync.store.Engine;
 import com.sharingapples.sync.store.Store;
 import com.sharingapples.sync.store.StoreException;
@@ -12,9 +8,7 @@ import org.apache.commons.pool2.ObjectPool;
 import org.apache.commons.pool2.impl.GenericObjectPool;
 
 import javax.sql.DataSource;
-import java.sql.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.sql.SQLException;
 import java.util.Properties;
 
 /**

@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
+ * The JDBC Engine for storing/retrieving data from JDBC specific databases
+ *
  * Created by ranjan on 12/14/15.
  */
 public class EngineJDBC extends Engine {
