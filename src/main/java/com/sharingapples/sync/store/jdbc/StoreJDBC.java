@@ -5,8 +5,6 @@ import com.sharingapples.sync.resource.ResourceMap;
 import com.sharingapples.sync.resource.ResourceMarker;
 import com.sharingapples.sync.store.Store;
 import com.sharingapples.sync.store.StoreException;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 
 import java.sql.*;
 import java.util.Properties;
@@ -19,6 +17,10 @@ public class StoreJDBC extends Store {
   private Connection db;
   private final String connUrl;
   private final Properties connProps;
+
+  protected Connection getConnection() {
+    return db;
+  }
 
   public StoreJDBC(String driverClass, String connUrl, Properties connProps) throws StoreException {
     super();
@@ -70,7 +72,6 @@ public class StoreJDBC extends Store {
     try {
       stmt = db.prepareStatement(sql);
       rs = stmt.executeQuery();
-      stmt.close();
     } catch(SQLException e) {
       throw new StoreException("Error while executing sql - " + sql, e);
     }
@@ -103,24 +104,29 @@ public class StoreJDBC extends Store {
   public <T extends ResourceMarker> T insert(ResourceMap<T> map, T resource) throws StoreException {
 
     StringBuilder sqlBuilder = new StringBuilder();
+    StringBuilder placeHolders = new StringBuilder();
     sqlBuilder.append("INSERT INTO ");
     sqlBuilder.append(quoteSystemIdentifier(map.getName()));
     sqlBuilder.append('(');
     for(int i=0; i<map.getFieldsCount(); ++i) {
-      if (i>0) {
-        sqlBuilder.append(',');
-      }
       FieldMap fieldMap =  map.getFieldMap(i);
-      sqlBuilder.append(quoteSystemIdentifier(fieldMap.getName()));
-    }
-    sqlBuilder.append(") VALUES (");
-    for(int i=0; i<map.getFieldsCount(); ++i) {
+
+      // skip the many relationships
+      if (fieldMap.getType().isMany()) {
+        continue;
+      }
+
       if (i>0) {
         sqlBuilder.append(',');
+        placeHolders.append(',');
       }
-      sqlBuilder.append('?');
+      sqlBuilder.append(quoteSystemIdentifier(fieldMap.getName()));
+      placeHolders.append('?');
     }
-    sqlBuilder.append(')');
+
+    sqlBuilder.append(") VALUES (");
+    sqlBuilder.append(placeHolders);
+    sqlBuilder.append(");");
 
     PreparedStatement stmt;
     try {
@@ -131,6 +137,9 @@ public class StoreJDBC extends Store {
 
     for(int i=0; i<map.getFieldsCount(); ++i) {
       FieldMap fieldMap = map.getFieldMap(i);
+      if (fieldMap.getType().isMany()) {
+        continue;
+      }
       fieldMap.getType().toJDBC(stmt, i+1, fieldMap.get(resource));
     }
 
@@ -189,7 +198,7 @@ public class StoreJDBC extends Store {
     }
 
     // clear from the cache as well
-    map.delete(resource);
+    map.remove(resource);
 
     return resource;
   }

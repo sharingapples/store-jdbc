@@ -50,32 +50,40 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
     this.primaryFieldColumnIndex = primaryFieldColumnIndex;
   }
 
-  T next() {
+  @Override
+  public boolean hasNext() {
     try {
       if (rs.next()) {
-        // First get the id of the record
-        Object id = map.getPrimaryField().getType().fromJDBC(rs, primaryFieldColumnIndex);
-        // if we have it in cache, we will update the same object, otherwise create a new one
-        T res = map.find(id);
-        for (int i = 0; i < map.getFieldsCount(); ++i) {
-          FieldMap fieldMap = map.getFieldMap(i);
-
-          // skip the many relations field
-          if (fieldMap.getType().isMany()) {
-            continue;
-          }
-
-          fieldMap.getType().fromJDBC(rs, columnIndexes[i]);
-        }
-
-        return res;
+        return true;
       } else {
         rs.close();
-        return null;
+        return false;
       }
     } catch(SQLException e) {
-      throw new StoreException("Could not fetch record from the ResultSet for " + map.getName());
+      throw new StoreException("Error while trying to move to next record");
     }
+  }
+
+  @Override
+  public T next() {
+
+    // First get the id of the record
+    Object id = map.getPrimaryField().getType().fromJDBC(rs, primaryFieldColumnIndex);
+    // if we have it in cache, we will update the same object, otherwise create a new one
+    T res = map.find(id);
+    for (int i = 0; i < map.getFieldsCount(); ++i) {
+      FieldMap fieldMap = map.getFieldMap(i);
+
+      // skip the many relations field
+      if (fieldMap.getType().isMany()) {
+        continue;
+      }
+
+      fieldMap.set(res, fieldMap.getType().fromJDBC(rs, columnIndexes[i]));
+    }
+
+    return res;
+
   }
 
 
