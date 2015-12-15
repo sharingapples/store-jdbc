@@ -3,6 +3,7 @@ package com.sharingapples.sync.store.jdbc;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sharingapples.sync.resource.*;
+import com.sharingapples.sync.state.ResourceProxy;
 import com.sharingapples.sync.state.State;
 import com.sharingapples.sync.store.Engine;
 import com.sharingapples.sync.store.Store;
@@ -20,15 +21,21 @@ import java.util.List;
 public class EngineJDBC extends Engine {
 
   private final Connection connection;
-  private final StoreJDBC store;
+
   EngineJDBC(StoreJDBC store, Connection connection) {
-    this.store = store;
+    super(store);
+
     this.connection = connection;
     try {
       this.connection.setAutoCommit(false);
     } catch(SQLException e) {
       throw new StoreException("Could not start transaction", e);
     }
+  }
+
+  @Override
+  public StoreJDBC getStore() {
+    return (StoreJDBC)super.getStore();
   }
 
   protected String quoteSystemIdentifier(String identifier) {
@@ -111,7 +118,7 @@ public class EngineJDBC extends Engine {
       throw new StoreException("Error while executing sql - " + sql, e);
     }
 
-    return new JDBCRecordSet<T>(store, stmt, map, rs);
+    return new JDBCRecordSet<T>(getStore(), stmt, map, rs);
   }
 
 
@@ -125,14 +132,14 @@ public class EngineJDBC extends Engine {
     ResultSet rs;
     try {
       stmt = connection.prepareStatement(sql);
-      store.getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
+      getStore().getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
       rs = stmt.executeQuery();
     } catch(SQLException e) {
       throw new StoreException("Error while executing - " + sql, e);
     }
 
     // Create a RecordSet that does all the transformation
-    JDBCRecordSet<T> recordSet = new JDBCRecordSet<T>(store, stmt, map, rs);
+    JDBCRecordSet<T> recordSet = new JDBCRecordSet<T>(getStore(), stmt, map, rs);
 
     if (recordSet.hasNext()) {
       T res = recordSet.next();
@@ -153,20 +160,22 @@ public class EngineJDBC extends Engine {
     JsonNode idNode = node.get(map.getPrimaryField().getName());
     if (idNode == null || idNode.isNull()) {
       // Definitely an insert
-      return insert(map, node);
+      ResourceProxy proxy =  insert(map, node);
+      return proxy.getId();
     } else {
       // It could be an update or an insert (Special case where id may be reference to another resource)
       if (idNode.isObject() && map.getPrimaryField().getType().isReference()) {
         return insertOrUpdateReference((ResourceMap)map.getPrimaryField().getType(), (ObjectNode)idNode);
       } else {
-        return update(map, node);
+        ResourceProxy proxy = update(map, node);
+        return proxy.getId();
         //fieldValue = referenced.getPrimaryField().getType().fromJson(idNode);
       }
     }
   }
 
   @Override
-  public Object insert(ResourceMap map, ObjectNode node) throws StoreException {
+  public ResourceProxy insert(ResourceMap map, ObjectNode node) throws StoreException {
 
     StringBuilder sqlBuilder = new StringBuilder();
     StringBuilder placeHolders = new StringBuilder();
@@ -232,7 +241,7 @@ public class EngineJDBC extends Engine {
         }
 
         try {
-          store.getJDBCFieldType(fieldMap.getType()).setValue(stmt, ++columnIndex, fieldValue);
+          getStore().getJDBCFieldType(fieldMap.getType()).setValue(stmt, ++columnIndex, fieldValue);
         } catch(SQLException e) {
           throw new StoreException("Could not convert " + fieldValue + " for " + fieldMap.getFullName(), e);
         }
@@ -252,10 +261,11 @@ public class EngineJDBC extends Engine {
       try (ResultSet keys = stmt.getGeneratedKeys()) {
         if (keys.next()) {
 
-          Object id = store.getJDBCFieldType(map.getPrimaryField().getType()).getValue(keys, 1);
+          Object id = getStore().getJDBCFieldType(map.getPrimaryField().getType()).getValue(keys, 1);
           node.set(map.getPrimaryField().getName(), map.getPrimaryField().getType().toJson(id));
           checkAndUpdate(manyList);
-          return id;
+
+          return new ResourceProxy(map, id, node);
         } else {
           throw new StoreException("Generated Key not found while inserting new record for " + map.getName());
         }
@@ -269,7 +279,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public Object update(ResourceMap map, ObjectNode node) {
+  public ResourceProxy update(ResourceMap map, ObjectNode node) {
     StringBuilder sqlBuilder = new StringBuilder();
     sqlBuilder.append("UPDATE ");
     sqlBuilder.append(quoteSystemIdentifier(map.getName()));
@@ -338,7 +348,7 @@ public class EngineJDBC extends Engine {
           }
 
           try {
-            store.getJDBCFieldType(fieldMap.getType()).setValue(stmt, i + 1, fieldValue);
+            getStore().getJDBCFieldType(fieldMap.getType()).setValue(stmt, i + 1, fieldValue);
           } catch(SQLException e) {
             throw new StoreException("Could not set " + fieldMap.getFullName() + " with " + fieldValue, e);
           }
@@ -349,7 +359,7 @@ public class EngineJDBC extends Engine {
       // Set the primary key value
       Object pKey = map.getPrimaryField().getType().fromJson(primaryFieldValue);
       try {
-        store.getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, valuesCount + 1, pKey);
+        getStore().getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, valuesCount + 1, pKey);
       } catch(SQLException e) {
         throw new StoreException("Could not set primary key value for " + map.getPrimaryField().getFullName() + " with " + pKey, e);
       }
@@ -360,7 +370,7 @@ public class EngineJDBC extends Engine {
         throw new StoreException("Error while executing sql - " + sqlBuilder.toString(), e);
       }
 
-      return pKey;
+      return new ResourceProxy(map, pKey, node);
 
     } catch(SQLException e) {
       throw new StoreException("Error while preparing sql - " + sqlBuilder.toString(), e);
@@ -374,7 +384,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public Object delete(ResourceMap map, Object id)
+  public ResourceProxy delete(ResourceMap map, Object id)
           throws StoreException {
     String sql = "DELETE FROM " + quoteSystemIdentifier(map.getName()) +
             "WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName()) + "=?";
@@ -387,7 +397,7 @@ public class EngineJDBC extends Engine {
     }
 
     try {
-      store.getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
+      getStore().getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
     } catch(SQLException e) {
       throw new StoreException("Could not set primary key value for " + map.getPrimaryField().getFullName() + " with " + id);
     }
@@ -403,6 +413,6 @@ public class EngineJDBC extends Engine {
       throw new StoreException("Delete failed. " + affectedRows + " records deleted from " + map.getName() + " while trying to delete " + id);
     }
 
-    return id;
+    return new ResourceProxy(map, id, null);
   }
 }
