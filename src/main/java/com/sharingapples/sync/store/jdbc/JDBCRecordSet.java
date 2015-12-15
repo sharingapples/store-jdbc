@@ -2,7 +2,7 @@ package com.sharingapples.sync.store.jdbc;
 
 import com.sharingapples.sync.resource.FieldMap;
 import com.sharingapples.sync.resource.ResourceMap;
-import com.sharingapples.sync.resource.ResourceMarker;
+import com.sharingapples.sync.resource.Resource;
 import com.sharingapples.sync.store.RecordSet;
 import com.sharingapples.sync.store.StoreException;
 
@@ -11,10 +11,13 @@ import java.sql.SQLException;
 import java.sql.Statement;
 
 /**
+ * A RecordSet implementation that wraps around the JDBC ResultSet
+ *
  * Created by ranjan on 12/13/15.
  */
-public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
+public class JDBCRecordSet<T extends Resource> implements RecordSet<T> {
 
+  private final StoreJDBC store;
   private final Statement statement;
   private final ResourceMap<T> map;
   private final ResultSet rs;
@@ -23,7 +26,8 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
   private final int[] columnIndexes;
   private final int primaryFieldColumnIndex;
 
-  JDBCRecordSet(Statement statement, ResourceMap<T> map, ResultSet rs) throws StoreException {
+  JDBCRecordSet(StoreJDBC store, Statement statement, ResourceMap<T> map, ResultSet rs) throws StoreException {
+    this.store = store;
     this.statement = statement;
     this.map = map;
     this.rs = rs;
@@ -74,7 +78,13 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
   public T next() {
 
     // First get the id of the record
-    Object id = map.getPrimaryField().getType().fromJDBC(rs, primaryFieldColumnIndex);
+    Object id;
+    try {
+      id = store.getJDBCFieldType(map.getPrimaryField().getType()).getValue(rs, primaryFieldColumnIndex);
+    } catch(SQLException e) {
+      throw new StoreException("Could not read primary key field value for " + map.getName());
+    }
+
     // if we have it in cache, we will update the same object, otherwise create a new one
     T res = map.find(id);
     for (int i = 0; i < map.getFieldsCount(); ++i) {
@@ -85,7 +95,11 @@ public class JDBCRecordSet<T extends ResourceMarker> implements RecordSet<T> {
         continue;
       }
 
-      fieldMap.set(res, fieldMap.getType().fromJDBC(rs, columnIndexes[i]));
+      try {
+        fieldMap.set(res, store.getJDBCFieldType(fieldMap.getType()).getValue(rs, columnIndexes[i]));
+      } catch (SQLException e) {
+        throw new StoreException("Could not read " + fieldMap.getFullName());
+      }
     }
 
     return res;

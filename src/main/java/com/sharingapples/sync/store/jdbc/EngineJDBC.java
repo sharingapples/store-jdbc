@@ -20,7 +20,9 @@ import java.util.List;
 public class EngineJDBC extends Engine {
 
   private final Connection connection;
-  EngineJDBC(Connection connection) {
+  private final StoreJDBC store;
+  EngineJDBC(StoreJDBC store, Connection connection) {
+    this.store = store;
     this.connection = connection;
     try {
       this.connection.setAutoCommit(false);
@@ -33,7 +35,7 @@ public class EngineJDBC extends Engine {
     return "\"" + identifier + "\"";
   }
 
-  public <T extends ResourceMarker> void createTable(Class<T> clazz) {
+  public <T extends Resource> void createTable(Class<T> clazz) {
     ResourceMap<T> map = State.getResourceMap(clazz);
 
     String sql = "CREATE TABLE IF NOT EXISTS " + quoteSystemIdentifier(map.getName()) + "(";
@@ -97,7 +99,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public <T extends ResourceMarker> JDBCRecordSet<T> fetchAll(ResourceMap<T> map) throws StoreException {
+  public <T extends Resource> JDBCRecordSet<T> fetchAll(ResourceMap<T> map) throws StoreException {
     String sql = "SELECT * FROM " + quoteSystemIdentifier(map.getName());
 
     PreparedStatement stmt;
@@ -109,11 +111,12 @@ public class EngineJDBC extends Engine {
       throw new StoreException("Error while executing sql - " + sql, e);
     }
 
-    return new JDBCRecordSet<T>(stmt, map, rs);
+    return new JDBCRecordSet<T>(store, stmt, map, rs);
   }
 
+
   @Override
-  public <T extends ResourceMarker> T fetch(ResourceMap<T> map, Object id) {
+  public <T extends Resource> T fetch(ResourceMap<T> map, Object id) {
     String sql = "SELECT * FROM " + quoteSystemIdentifier(map.getName())
             + " WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName())
             + "=?";
@@ -122,14 +125,14 @@ public class EngineJDBC extends Engine {
     ResultSet rs;
     try {
       stmt = connection.prepareStatement(sql);
-      map.getPrimaryField().getType().toJDBC(stmt, 1, id);
+      store.getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
       rs = stmt.executeQuery();
     } catch(SQLException e) {
       throw new StoreException("Error while executing - " + sql, e);
     }
 
     // Create a RecordSet that does all the transformation
-    JDBCRecordSet<T> recordSet = new JDBCRecordSet<T>(stmt, map, rs);
+    JDBCRecordSet<T> recordSet = new JDBCRecordSet<T>(store, stmt, map, rs);
 
     if (recordSet.hasNext()) {
       T res = recordSet.next();
@@ -228,11 +231,12 @@ public class EngineJDBC extends Engine {
           }
         }
 
-        if (fieldValue == null) {
-          stmt.setObject(++columnIndex, null);
-        } else {
-          fieldMap.getType().toJDBC(stmt, ++columnIndex, fieldValue);
+        try {
+          store.getJDBCFieldType(fieldMap.getType()).setValue(stmt, ++columnIndex, fieldValue);
+        } catch(SQLException e) {
+          throw new StoreException("Could not convert " + fieldValue + " for " + fieldMap.getFullName(), e);
         }
+
       }
 
       int affectedRows;
@@ -247,8 +251,9 @@ public class EngineJDBC extends Engine {
 
       try (ResultSet keys = stmt.getGeneratedKeys()) {
         if (keys.next()) {
-          Object id = map.getPrimaryField().getType().fromJDBC(keys, 1);
-          node.putPOJO(map.getPrimaryField().getName(), map.getPrimaryField().getType().toJson(id));
+
+          Object id = store.getJDBCFieldType(map.getPrimaryField().getType()).getValue(keys, 1);
+          node.set(map.getPrimaryField().getName(), map.getPrimaryField().getType().toJson(id));
           checkAndUpdate(manyList);
           return id;
         } else {
@@ -332,13 +337,22 @@ public class EngineJDBC extends Engine {
             fieldValue = fieldMap.getType().fromJson(nodeValue);
           }
 
-          fieldMap.getType().toJDBC(stmt, (i+1), fieldValue);
+          try {
+            store.getJDBCFieldType(fieldMap.getType()).setValue(stmt, i + 1, fieldValue);
+          } catch(SQLException e) {
+            throw new StoreException("Could not set " + fieldMap.getFullName() + " with " + fieldValue, e);
+          }
+
         }
       }
 
       // Set the primary key value
       Object pKey = map.getPrimaryField().getType().fromJson(primaryFieldValue);
-      map.getPrimaryField().getType().toJDBC(stmt, valuesCount+1, pKey);
+      try {
+        store.getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, valuesCount + 1, pKey);
+      } catch(SQLException e) {
+        throw new StoreException("Could not set primary key value for " + map.getPrimaryField().getFullName() + " with " + pKey, e);
+      }
 
       try {
         stmt.executeUpdate();
@@ -371,7 +385,12 @@ public class EngineJDBC extends Engine {
     } catch (SQLException e) {
       throw new StoreException("Error while preparing sql - " + sql, e);
     }
-    map.getPrimaryField().getType().toJDBC(stmt, 1, id);
+
+    try {
+      store.getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
+    } catch(SQLException e) {
+      throw new StoreException("Could not set primary key value for " + map.getPrimaryField().getFullName() + " with " + id);
+    }
 
     int affectedRows = 0;
     try {
