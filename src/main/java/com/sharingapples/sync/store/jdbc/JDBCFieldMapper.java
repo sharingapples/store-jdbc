@@ -4,9 +4,12 @@ import java.sql.*;
 import java.time.*;
 
 /**
+ * A Field Mapper for for making the generic data types compatible with the
+ * JDBC PreparedStatement and ResultSet
+ *
  * Created by ranjan on 12/15/15.
  */
-public interface JDBCFieldMapper<T> {
+interface JDBCFieldMapper<T> {
 
 
   void setValue(PreparedStatement statement, int index, T value) throws SQLException;
