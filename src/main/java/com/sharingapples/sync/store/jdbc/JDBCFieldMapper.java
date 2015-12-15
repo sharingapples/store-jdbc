@@ -11,8 +11,30 @@ import java.time.*;
  */
 interface JDBCFieldMapper<T> {
 
-
+  /**
+   * Sets the value of the parameters in JDBC PreparedStatement using the
+   * right set... method of the statement. Should also handle NULL values
+   *
+   * @param statement The PreparedStatement that needs to be setup
+   * @param index The position in the prepared index which needs to be set
+   *              (Starts from 1)
+   * @param value The value to be set
+   * @throws SQLException If the value is not compatible or the index is out of
+   *                      bound
+   */
   void setValue(PreparedStatement statement, int index, T value) throws SQLException;
+
+  /**
+   * Retrieve the value from the database query result at the given column
+   * index using the right set... method. Should also handle NULL (using the
+   * wasNull) method available in the library.
+   *
+   * @param resultSet The ResultSet from where to retrieve the data
+   * @param index The column index to retrieve data at. (Starts from 1)
+   * @return The value from the database
+   * @throws SQLException If the value is not compatible or the index is out of
+   *                      bound
+   */
   T getValue(ResultSet resultSet, int index) throws SQLException;
 
   JDBCFieldMapper<Integer> INT = new JDBCFieldMapper<Integer>() {
