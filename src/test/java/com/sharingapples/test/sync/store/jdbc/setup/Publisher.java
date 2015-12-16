@@ -1,12 +1,12 @@
 package com.sharingapples.test.sync.store.jdbc.setup;
 
-import com.sharingapples.sync.resource.ResourceMarker;
+import com.sharingapples.sync.resource.Resource;
 import com.sharingapples.sync.resource.annotations.Field;
 
 /**
  * Created by ranjan on 12/13/15.
  */
-public class Publisher implements ResourceMarker {
+public class Publisher implements Resource {
 
   @Field private Long id;
   @Field private String name;

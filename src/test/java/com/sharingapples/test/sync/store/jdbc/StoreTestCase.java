@@ -3,10 +3,12 @@ package com.sharingapples.test.sync.store.jdbc;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sharingapples.sync.init.InitProcess;
 import com.sharingapples.sync.resource.Registrar;
 import com.sharingapples.sync.state.State;
 import com.sharingapples.sync.store.Engine;
-import com.sharingapples.sync.store.StoreSessionCallback;
+import com.sharingapples.sync.store.ResourceCache;
+import com.sharingapples.sync.store.StorageSession;
 import com.sharingapples.sync.store.jdbc.EngineJDBC;
 import com.sharingapples.sync.store.jdbc.StoreSqlite;
 import com.sharingapples.test.sync.store.jdbc.setup.Author;
@@ -24,15 +26,15 @@ import static org.junit.Assert.*;
  * Created by ranjan on 12/13/15.
  */
 public class StoreTestCase {
+
+  private Registrar registrar;
+
   @Before
   public void init() {
-    State.initResources(new State.RegistrationCallback() {
-      @Override
-      public void onResourceRegistration(Registrar registrar) {
-        registrar.registerResource(Book.class);
-        registrar.registerResource(Author.class);
-        registrar.registerResource(Publisher.class);
-      }
+    registrar = new Registrar(source -> {
+      source.registerResource(Book.class);
+      source.registerResource(Author.class);
+      source.registerResource(Publisher.class);
     });
   }
 
@@ -53,31 +55,25 @@ public class StoreTestCase {
     JsonNode bookNode = mapper.readTree(bookJSON);
 
     Book book = new Book();
-    book.setJSON((ObjectNode) bookNode);
+    //book.setJSON((ObjectNode) bookNode);
 
-    StoreSqlite store = new StoreSqlite(File.createTempFile("store-jdbc-", ".sqlite"));
+    StoreSqlite store = new StoreSqlite(registrar, File.createTempFile("store-jdbc-", ".sqlite"));
 
-    store.execute(new StoreSessionCallback() {
-      @Override
-      public void onStorageSession(Engine engine) {
-        EngineJDBC e = (EngineJDBC) engine;
-        e.createTable(Book.class);
-        e.createTable(Author.class);
-        e.createTable(Publisher.class);
-      }
+    store.execute(engine -> {
+
+      EngineJDBC e = (EngineJDBC) engine;
+      e.createTable(Book.class);
+      e.createTable(Author.class);
+      e.createTable(Publisher.class);
+
+      return null;
     });
 
-    store.execute(new StoreSessionCallback() {
-      @Override
-      public void onStorageSession(Engine engine) {
-        Book bk = engine.insert(State.getResourceMap(Book.class), book);
-
-        assertEquals(bk, book);
-        assertEquals(1L, (long) bk.getId());
-        assertEquals(1L, (long) book.getPublisher().getId());
-        //assertEquals(1L, (long) book.getAuthors().iterator().next().getId());
-      }
+    ResourceCache<Book> newBook = (ResourceCache<Book>)store.execute(engine -> {
+      return engine.insert(book);
     });
+
+
 
 
 
