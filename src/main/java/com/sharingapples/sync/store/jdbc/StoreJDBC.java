@@ -1,6 +1,7 @@
 package com.sharingapples.sync.store.jdbc;
 
 import com.sharingapples.sync.resource.DataType;
+import com.sharingapples.sync.resource.Registrar;
 import com.sharingapples.sync.resource.ResourceMap;
 import com.sharingapples.sync.store.Engine;
 import com.sharingapples.sync.store.Store;
@@ -25,8 +26,8 @@ public class StoreJDBC extends Store {
   private DataSource dataSource;
   private Map<DataType, JDBCFieldMapper> mappedJDBCFieldTypes = new HashMap<>();
 
-  public StoreJDBC(String driverClass, String connUrl, Properties connProps) throws StoreException {
-    super();
+  public StoreJDBC(Registrar registrar, String driverClass, String connUrl, Properties connProps) throws StoreException {
+    super(registrar);
 
     // Initialize the driver
     try {

@@ -44,7 +44,7 @@ public class EngineJDBC extends Engine {
   }
 
   public <T extends Resource> void createTable(Class<T> clazz) {
-    ResourceMap<T> map = State.getResourceMap(clazz);
+    ResourceMap<T> map = getStore().getRegistrar().getResourceMap(clazz);
 
     String sql = "CREATE TABLE IF NOT EXISTS " + quoteSystemIdentifier(map.getName()) + "(";
     for(int i=0; i<map.getFieldsCount(); ++i) {
