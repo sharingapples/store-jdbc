@@ -6,6 +6,7 @@ import com.sharingapples.sync.resource.*;
 import com.sharingapples.sync.state.ResourceProxy;
 import com.sharingapples.sync.state.State;
 import com.sharingapples.sync.store.Engine;
+import com.sharingapples.sync.store.ResourceCache;
 import com.sharingapples.sync.store.Store;
 import com.sharingapples.sync.store.StoreException;
 
@@ -87,7 +88,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public void commit() {
+  public void doCommit() {
     try {
       connection.commit();
     } catch(SQLException e) {
@@ -96,7 +97,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public void close() {
+  public void doClose() {
     try {
       connection.rollback();
       connection.close();
@@ -160,22 +161,19 @@ public class EngineJDBC extends Engine {
     JsonNode idNode = node.get(map.getPrimaryField().getName());
     if (idNode == null || idNode.isNull()) {
       // Definitely an insert
-      ResourceProxy proxy =  insert(map, node);
-      return proxy.getId();
+      return insert(map, node);
     } else {
       // It could be an update or an insert (Special case where id may be reference to another resource)
       if (idNode.isObject() && map.getPrimaryField().getType().isReference()) {
         return insertOrUpdateReference((ResourceMap)map.getPrimaryField().getType(), (ObjectNode)idNode);
       } else {
-        ResourceProxy proxy = update(map, node);
-        return proxy.getId();
-        //fieldValue = referenced.getPrimaryField().getType().fromJson(idNode);
+        return update(map, node);
       }
     }
   }
 
   @Override
-  public ResourceProxy insert(ResourceMap map, ObjectNode node) throws StoreException {
+  public ResourceCache insert(ResourceMap map, ObjectNode node) throws StoreException {
 
     StringBuilder sqlBuilder = new StringBuilder();
     StringBuilder placeHolders = new StringBuilder();
@@ -262,10 +260,10 @@ public class EngineJDBC extends Engine {
         if (keys.next()) {
 
           Object id = getStore().getJDBCFieldType(map.getPrimaryField().getType()).getValue(keys, 1);
-          node.set(map.getPrimaryField().getName(), map.getPrimaryField().getType().toJson(id));
+          node.set(map.getPrimaryField().getName(), map.getPrimaryField().getType().toJSON(id));
           checkAndUpdate(manyList);
 
-          return new ResourceProxy(map, id, node);
+          return new ResourceCache(this, map, null, node);
         } else {
           throw new StoreException("Generated Key not found while inserting new record for " + map.getName());
         }
@@ -279,7 +277,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public ResourceProxy update(ResourceMap map, ObjectNode node) {
+  public ResourceCache update(ResourceMap map, ObjectNode node) {
     StringBuilder sqlBuilder = new StringBuilder();
     sqlBuilder.append("UPDATE ");
     sqlBuilder.append(quoteSystemIdentifier(map.getName()));
@@ -370,7 +368,7 @@ public class EngineJDBC extends Engine {
         throw new StoreException("Error while executing sql - " + sqlBuilder.toString(), e);
       }
 
-      return new ResourceProxy(map, pKey, node);
+      return new ResourceCache(this, map, pKey, node);
 
     } catch(SQLException e) {
       throw new StoreException("Error while preparing sql - " + sqlBuilder.toString(), e);
@@ -384,7 +382,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public ResourceProxy delete(ResourceMap map, Object id)
+  public ResourceCache delete(ResourceMap map, Object id)
           throws StoreException {
     String sql = "DELETE FROM " + quoteSystemIdentifier(map.getName()) +
             "WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName()) + "=?";
@@ -413,6 +411,6 @@ public class EngineJDBC extends Engine {
       throw new StoreException("Delete failed. " + affectedRows + " records deleted from " + map.getName() + " while trying to delete " + id);
     }
 
-    return new ResourceProxy(map, id, null);
+    return new ResourceCache(this, map, id, null);
   }
 }
