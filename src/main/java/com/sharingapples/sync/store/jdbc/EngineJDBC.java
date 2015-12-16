@@ -173,7 +173,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public ResourceCache insert(ResourceMap map, ObjectNode node) throws StoreException {
+  public <T extends Resource> ResourceCache<T> insert(ResourceMap<T> map, ObjectNode node) throws StoreException {
 
     StringBuilder sqlBuilder = new StringBuilder();
     StringBuilder placeHolders = new StringBuilder();
@@ -277,7 +277,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public ResourceCache update(ResourceMap map, ObjectNode node) {
+  public <T extends Resource> ResourceCache<T> update(ResourceMap<T> map, ObjectNode node) {
     StringBuilder sqlBuilder = new StringBuilder();
     sqlBuilder.append("UPDATE ");
     sqlBuilder.append(quoteSystemIdentifier(map.getName()));
@@ -382,7 +382,7 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public ResourceCache delete(ResourceMap map, Object id)
+  public <T extends Resource> ResourceCache<T> delete(ResourceMap<T> map, Object id)
           throws StoreException {
     String sql = "DELETE FROM " + quoteSystemIdentifier(map.getName()) +
             "WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName()) + "=?";
