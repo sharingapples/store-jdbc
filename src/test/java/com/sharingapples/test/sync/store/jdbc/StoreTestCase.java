@@ -55,6 +55,7 @@ public class StoreTestCase {
     JsonNode bookNode = mapper.readTree(bookJSON);
 
     Book book = new Book();
+
     //book.setJSON((ObjectNode) bookNode);
 
     StoreSqlite store = new StoreSqlite(registrar, File.createTempFile("store-jdbc-", ".sqlite"));
@@ -69,9 +70,11 @@ public class StoreTestCase {
       return null;
     });
 
-    ResourceCache<Book> newBook = (ResourceCache<Book>)store.execute(engine -> {
-      return engine.insert(book);
-    });
+    store.save(book);
+
+
+    ResourceCache<Book> newBook =
+            (ResourceCache<Book>)store.execute(session -> session.save(book));
 
 
 

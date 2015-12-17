@@ -65,7 +65,7 @@ public class StoreJDBC extends Store {
   }
 
   @Override
-  protected Engine startEngine() {
+  protected EngineJDBC startEngine() {
     try {
       return new EngineJDBC(this, dataSource.getConnection());
     } catch(SQLException e) {
@@ -73,6 +73,14 @@ public class StoreJDBC extends Store {
     }
   }
 
+  @Override
+  public String getVersion() {
+    throw new UnsupportedOperationException("Versioning not implemented");
+  }
 
+  @Override
+  public void setVersion(String version) {
+    throw new UnsupportedOperationException("Versioning not implemented");
+  }
 
 }

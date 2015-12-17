@@ -39,6 +39,10 @@ public class EngineJDBC extends Engine {
     return (StoreJDBC)super.getStore();
   }
 
+  public Connection getConnection() {
+    return connection;
+  }
+
   protected String quoteSystemIdentifier(String identifier) {
     return "\"" + identifier + "\"";
   }
@@ -413,4 +417,5 @@ public class EngineJDBC extends Engine {
 
     return new ResourceCache(this, map, id, null);
   }
+
 }
