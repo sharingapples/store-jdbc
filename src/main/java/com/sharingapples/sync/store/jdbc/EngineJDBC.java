@@ -62,9 +62,9 @@ public class EngineJDBC extends Engine {
       }
 
       sql += fieldMap.getName() + " " + getTypeName(fieldMap.getType());
-      if (fieldMap == map.getPrimaryField()) {
-        sql += " PRIMARY KEY AUTOINCREMENT";
-      }
+//      if (fieldMap.isKey()) {
+//        sql += " PRIMARY KEY ";
+//      }
     }
     sql += ");";
 
@@ -128,16 +128,24 @@ public class EngineJDBC extends Engine {
 
 
   @Override
-  public <T extends Resource> T fetch(ResourceMap<T> map, Object id) {
+  public <T extends Resource> T fetch(ResourceMap<T> map, Key key) {
     String sql = "SELECT * FROM " + quoteSystemIdentifier(map.getName())
-            + " WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName())
-            + "=?";
+            + " WHERE ";
+    for(int i=0; i<key.getFieldCount(); ++i) {
+      if (i > 0) {
+        sql += " AND ";
+      }
+      sql += quoteSystemIdentifier(key.getField(i).getName());
+      sql += "=?";
+    }
 
     PreparedStatement stmt;
     ResultSet rs;
     try {
       stmt = connection.prepareStatement(sql);
-      getStore().getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
+      for(int i=0; i<key.getFieldCount(); ++i) {
+        getStore().getJDBCFieldType(key.getField(i).getType()).setValue(stmt, i+1, key.getValue(i));
+      }
       rs = stmt.executeQuery();
     } catch(SQLException e) {
       throw new StoreException("Error while executing - " + sql, e);
@@ -152,7 +160,7 @@ public class EngineJDBC extends Engine {
       // If there are more than one records, then raise an error flag and iterate
       // through them, to make sure the record set is closed properly
       while(recordSet.hasNext()) {
-        Store.LOGGER.warn("More than one record retrieved in fetch for " + map.getName() + " for id " + id);
+        Store.LOGGER.warn("More than one record retrieved in fetch for " + map.getName() + " for id " + key);
       }
 
       return res;
@@ -162,17 +170,17 @@ public class EngineJDBC extends Engine {
   }
 
   private Object insertOrUpdateReference(ResourceMap map, ObjectNode node) {
-    JsonNode idNode = node.get(map.getPrimaryField().getName());
+    JsonNode idNode = map.getPrimaryKey(node).toJson();
     if (idNode == null || idNode.isNull()) {
       // Definitely an insert
       return insert(map, node);
     } else {
-      // It could be an update or an insert (Special case where id may be reference to another resource)
-      if (idNode.isObject() && map.getPrimaryField().getType().isReference()) {
-        return insertOrUpdateReference((ResourceMap)map.getPrimaryField().getType(), (ObjectNode)idNode);
-      } else {
-        return update(map, node);
-      }
+      // TODO It could be an update or an insert (Special case where id may be reference to another resource)
+      //if (idNode.isObject() && map.getPrimaryField().getType().isReference()) {
+      //  return insertOrUpdateReference((ResourceMap)map.getPrimaryField().getType(), (ObjectNode)idNode);
+      //} else {
+      return update(map, node);
+      //}
     }
   }
 
@@ -232,10 +240,12 @@ public class EngineJDBC extends Engine {
           if (fieldMap.getType().isReference()) {
             ResourceMap referenced = (ResourceMap) fieldMap.getType();
             // in case of reference, we might need to do a recursive insert
+            // TODO looks like things got complicated here because of ComplexKeys
+            // Both the complex key and a reference to object would be a ObjectNode
             if (valueNode.isObject()) {
               fieldValue = insertOrUpdateReference(referenced, (ObjectNode)valueNode);
             } else {
-              fieldValue = referenced.getPrimaryField().getType().fromJson(valueNode);
+              fieldValue = referenced.getPrimaryKey(valueNode.toString());
             }
           } else {
             fieldValue = fieldMap.getType().fromJson(valueNode);
@@ -262,10 +272,14 @@ public class EngineJDBC extends Engine {
 
       try (ResultSet keys = stmt.getGeneratedKeys()) {
         if (keys.next()) {
+          Key key = map.getPrimaryKey(node);
+          for(int i=0; i<key.getFieldCount(); ++i) {
+            FieldMap keyField = key.getField(i);
+            Object keyValue = getStore().getJDBCFieldType(keyField.getType()).getValue(keys, i + 1);
+            node.set(keyField.getName(), keyField.getType().toJSON(keyValue));
+          }
 
-          Object id = getStore().getJDBCFieldType(map.getPrimaryField().getType()).getValue(keys, 1);
-          node.set(map.getPrimaryField().getName(), map.getPrimaryField().getType().toJSON(id));
-          checkAndUpdate(manyList);
+          //checkAndUpdate(manyList);
 
           return new ResourceCache(this, map, null, node);
         } else {
@@ -291,8 +305,9 @@ public class EngineJDBC extends Engine {
 
     FieldMap fields[] = new FieldMap[map.getFieldsCount()];
     JsonNode values[] = new JsonNode[map.getFieldsCount()];
-    JsonNode primaryFieldValue = null;
     int valuesCount = 0;
+
+    Key key = map.getPrimaryKey(node);
 
     for(int i=0; i<map.getFieldsCount(); ++i) {
       FieldMap fieldMap = map.getFieldMap(i);
@@ -303,11 +318,7 @@ public class EngineJDBC extends Engine {
         continue;
       }
 
-      if (fieldMap == map.getPrimaryField()) {
-        primaryFieldValue = node.get(fieldMap.getName());
-        if (primaryFieldValue == null || primaryFieldValue.isNull()) {
-          throw new StoreException(map.getName() + " UPDATE request without ID value");
-        }
+      if (fieldMap.isKey()) {
         // no need to add the primary key field as well
         continue;
       }
@@ -326,11 +337,12 @@ public class EngineJDBC extends Engine {
     }
 
     sqlBuilder.append(" WHERE ");
-    sqlBuilder.append(map.getPrimaryField().getName());
-    sqlBuilder.append("=?");
-
-    if(primaryFieldValue == null) {
-      throw new StoreException("Could not find primary field in " + map.getName());
+    for(int i=0; i<key.getFieldCount(); ++i) {
+      if (i > 0) {
+        sqlBuilder.append(" AND ");
+      }
+      sqlBuilder.append(key.getField(i).getName());
+      sqlBuilder.append("=?");
     }
 
     try (PreparedStatement stmt = connection.prepareStatement(sqlBuilder.toString())) {
@@ -359,11 +371,14 @@ public class EngineJDBC extends Engine {
       }
 
       // Set the primary key value
-      Object pKey = map.getPrimaryField().getType().fromJson(primaryFieldValue);
-      try {
-        getStore().getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, valuesCount + 1, pKey);
-      } catch(SQLException e) {
-        throw new StoreException("Could not set primary key value for " + map.getPrimaryField().getFullName() + " with " + pKey, e);
+
+      for(int i=0; i<key.getFieldCount(); ++i) {
+        FieldMap keyField = key.getField(i);
+        try {
+          getStore().getJDBCFieldType(keyField.getType()).setValue(stmt, valuesCount + 1, key.getValue(i));
+        } catch(SQLException e) {
+          throw new StoreException("Could not set primary key value for " + keyField.getFullName() + " with " + key.getValue(i), e);
+        }
       }
 
       try {
@@ -372,7 +387,7 @@ public class EngineJDBC extends Engine {
         throw new StoreException("Error while executing sql - " + sqlBuilder.toString(), e);
       }
 
-      return new ResourceCache(this, map, pKey, node);
+      return new ResourceCache(this, map, key, node);
 
     } catch(SQLException e) {
       throw new StoreException("Error while preparing sql - " + sqlBuilder.toString(), e);
@@ -386,10 +401,17 @@ public class EngineJDBC extends Engine {
   }
 
   @Override
-  public <T extends Resource> ResourceCache<T> delete(ResourceMap<T> map, Object id)
+  public <T extends Resource> ResourceCache<T> delete(ResourceMap<T> map, Key key)
           throws StoreException {
     String sql = "DELETE FROM " + quoteSystemIdentifier(map.getName()) +
-            "WHERE " + quoteSystemIdentifier(map.getPrimaryField().getName()) + "=?";
+            "WHERE ";
+    for(int i=0; i<key.getFieldCount(); ++i) {
+      if (i > 0) {
+        sql += " AND ";
+      }
+      sql += quoteSystemIdentifier(key.getField(i).getName());
+      sql += "=?";
+    }
 
     PreparedStatement stmt = null;
     try {
@@ -398,10 +420,13 @@ public class EngineJDBC extends Engine {
       throw new StoreException("Error while preparing sql - " + sql, e);
     }
 
-    try {
-      getStore().getJDBCFieldType(map.getPrimaryField().getType()).setValue(stmt, 1, id);
-    } catch(SQLException e) {
-      throw new StoreException("Could not set primary key value for " + map.getPrimaryField().getFullName() + " with " + id);
+    for(int i=0; i<key.getFieldCount(); ++i) {
+      FieldMap keyField = key.getField(i);
+      try {
+        getStore().getJDBCFieldType(keyField.getType()).setValue(stmt, i+1, key.getValue(i));
+      } catch (SQLException e) {
+        throw new StoreException("Could not set primary key value for " + keyField.getFullName() + " with " + key.getValue(i));
+      }
     }
 
     int affectedRows = 0;
@@ -412,10 +437,10 @@ public class EngineJDBC extends Engine {
     }
 
     if (affectedRows != 1) {
-      throw new StoreException("Delete failed. " + affectedRows + " records deleted from " + map.getName() + " while trying to delete " + id);
+      throw new StoreException("Delete failed. " + affectedRows + " records deleted from " + map.getName() + " while trying to delete " + key);
     }
 
-    return new ResourceCache(this, map, id, null);
+    return new ResourceCache(this, map, key, null);
   }
 
 }
